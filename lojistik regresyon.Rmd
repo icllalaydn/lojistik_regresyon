@@ -1,0 +1,259 @@
+---
+title: "LOJ.REG"
+author: "İclal"
+date: "28 04 2025"
+output:
+  word_document: default
+  html_document: default
+---
+
+---
+title: "Lojistik Regresyon Modeli"
+author: "İclal"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## 1. Gerekli Paketlerin Yüklenmesi ve Yüklenmesi
+
+Lojistik regresyon için gerekli olan paketleri yükleyelim.
+
+```{r}
+library(glmnet)
+library(cli)
+library(tidyverse)
+library(modelr)
+library(broom)
+library(ISLR)
+library(pscl)
+library(tibble)
+library(dplyr)
+```
+
+Veri setini ISLR paketinden Default veri seti olarak alıyoruz ve genel bir inceleme yapıyoruz.
+
+```{r}
+data <- Default
+head(data)
+default <- as_tibble(ISLR::Default) 
+```
+
+
+Veri setini %60 eğitim, %40 test olacak şekilde bölelim.
+
+```{r}
+set.seed(123)
+sample1 <- sample(1:nrow(data),size = 0.6*nrow(data))
+train <- data[sample1,]
+test <- data[-sample1,]
+```
+
+
+glm() fonksiyonunu kullanarak, eğitim verisiyle bir lojistik regresyon modeli oluşturalım. Bu modelde, bağımlı değişken default ve bağımsız değişken olarak balance yer alacak.
+
+```{r}
+model1 <- glm(default ~ balance, family = "binomial", data = train)
+summary(model1)
+
+#Kişinin bakiyesi 0 olduğunda (yani hiç borcu yokken) temerrüde düşme logit'i (log-olasılığı) -10.78'dir.
+
+#balance (bakiye) 1 birim arttığında, temerrüde düşme logit değeri 0.005584 birim artıyor
+
+```
+
+
+Modelin katsayılarını inceleyelim. Lojistik regresyonda, katsayılar log-odds (logaritmik oran) şeklinde verilir. Bu katsayıları üssel hale getirelim (odds ratio).
+```{r}
+exp(coef(model1))
+```
+Buradan cıkan sonuca göre ;
+
+Bireyin bakiyesindeki her 1 birimlik artış, temerrüde düşme olasılığını yaklaşık %0.56 oranında artırmaktadır. Başlangıç bakiyesi sıfır olan bireylerin temerrüde düşme ihtimali ise yok denecek kadar düşüktür.
+
+
+
+Modelden elde edilen tahminlerin olasılıklarını hesaplayalım. Bu işlemi type = "response" parametresi ile yapıyoruz.
+```{r}
+predict(model1, data.frame(balance = c(1000, 2000)), type = "response")
+```
+Model sonuçlarına göre, kredi kartı bakiyesi 1000 olan bir bireyin temerrüde düşme ihtimali yaklaşık %0.55 iken, bakiyesi 2000 olan bir bireyin temerrüde düşme ihtimali %59.64’e çıkmaktadır. Bu durum, bakiye arttıkça temerrüde düşme riskinin belirgin şekilde arttığını göstermektedir.
+
+
+
+Bir kategorik değişken olan student ile bir model daha kurabiliriz. Bu modelde student değişkenini bağımsız değişken olarak kullanacağız.
+```{r}
+model2 <- glm(default ~ student, family = "binomial", data = train)
+summary(model2)
+exp(coef(model2))
+
+```
+studentYes değişkeninin p-değeri 0.00912, yani 0.01'den küçük.
+
+Bu nedenle student değişkeni, istatistiksel olarak anlamlıdır. Yani gerçekten "öğrenci olma" durumu temerrüde düşme riskini etkiliyor diyebiliriz.
+
+Öğrenci olmayan bireylerin temerrüde düşme olasılık oranı oldukça düşük (%3 civarında) iken, öğrenci olan bireylerin temerrüde düşme olasılık oranı öğrenci olmayanlara kıyasla yaklaşık %47.7 daha fazladır.
+
+
+
+
+# Çoklu Lojistik Regresyon Modeli
+Birden fazla bağımsız değişken kullanarak, çoklu lojistik regresyon modelini kuruyoruz. Bu modelde balance, income, ve student değişkenlerini kullanacağız.
+```{r}
+model3 <- glm(default ~ balance + income + student, family = "binomial", data = train)
+summary(model3)
+exp(coef(model3))
+
+```
+Balance değişkeni, temerrüde düşmeyi güçlü şekilde açıklıyor (pozitif ve anlamlı).
+Income değişkeni anlamlı bir etkide bulunmuyor.
+Student değişkeni negatif etki ediyor gibi, ama anlamlılık sınırında (zayıf bir etki).
+Modelin AIC değeri (934.42) önceki modellerden düşük → bu model daha iyi açıklayıcı güce sahip.
+
+Kısa bir örnek cümle ile toparlarsak:
+Balance değişkeni temerrüde düşme riskini anlamlı şekilde artırırken, income değişkeninin etkisi istatistiksel olarak anlamlı bulunmamıştır. Student değişkeni, temerrüde düşme olasılığını azaltıyor gibi görünmekle birlikte, bu etkinin anlamlılığı sınırlıdır.
+
+
+
+
+
+
+Modellerin başarısını karşılaştırmak için, Anova testi kullanarak iki modeli karşılaştıralım.
+```{r}
+Anova <- anova(model1, model3, test = "Chisq")
+Anova
+```
+Balance değişkenine ek olarak income ve student değişkenlerinin modele dahil edilmesi, temerrüde düşme olasılığını açıklamada anlamlı bir iyileşme sağlamıştır (p = 0.0018).
+
+
+
+
+# Pseudo R-Kare Değerleri
+Her bir model için pseudo R-kare değerlerini hesaplayalım. Bu, modelin uyumunu ölçen bir değerdir.
+```{r}
+list(
+  model1 = pscl::pR2(model1)["McFadden"],
+  model2 = pscl::pR2(model2)["McFadden"],
+  model3 = pscl::pR2(model3)["McFadden"]
+)
+
+```
+Balance değişkeni temerrüt olasılığını açıklamada oldukça güçlüdür (McFadden R² ≈ 0.46).
+Student değişkeni tek başına temerrüdü açıklamada etkisiz kalmıştır (McFadden R² ≈ 0.004).
+Balance, income ve student değişkenlerinin birlikte kullanıldığı model, en yüksek açıklayıcılığı sağlamıştır (McFadden R² ≈ 0.47).
+
+
+
+
+# Test Seti Üzerinden Tahminler
+Test seti üzerinde her üç modeli kullanarak tahmin yapalım. predict() fonksiyonu ile test seti üzerindeki olasılıkları hesaplayacağız.
+
+```{r}
+test.predicted.m1 <- predict(model1, newdata = test, type = "response")
+test.predicted.m2 <- predict(model2, newdata = test, type = "response")
+test.predicted.m3 <- predict(model3, newdata = test, type = "response")
+
+```
+
+
+# Model Performansı ve Doğrulama
+Test seti üzerinden her model için doğruluk oranlarını ve karmaşıklık matrislerini inceleyelim.
+```{r}
+list(
+  model1 = table(test$default, test.predicted.m1 > 0.5) %>% prop.table() %>% round(5),
+  model2 = table(test$default, test.predicted.m2 > 0.5) %>% prop.table() %>% round(5),
+  model3 = table(test$default, test.predicted.m3 > 0.5) %>% prop.table() %>% round(5)
+)
+
+```
+"Model 1 ve Model 3, temerrüt eden müşterileri küçük bir oranla da olsa doğru tahmin edebilmektedir (%0.95 ve %1.025).
+Model 2 ise yalnızca öğrenci bilgisine dayanarak tahmin yaptığı için temerrüt eden bireyleri doğru şekilde sınıflandıramamıştır.
+Genel olarak, balance değişkeni modeli güçlendirmekte ve model3 (balance + income + student) en iyi doğrulama performansına sahiptir
+
+
+
+# Karmaşıklık Matrisi ve Doğruluk
+Karmaşıklık matrisi ile modelin doğruluğunu inceleyelim.
+```{r}
+predictClass <- ifelse(test.predicted.m1 > 0.5, "Yes", "No")
+predictClass <- as.factor(predictClass)
+caret::confusionMatrix(predictClass, reference = test$default, positive = "Yes")
+```
+"Model genel olarak yüksek doğruluğa (%97.12) sahip olsa da, 'default' yapan bireyleri tahmin etme konusunda zayıftır (Sensitivity: %28.36).
+'Default etmeyen' bireyler ise %99'un üzerinde doğru tahmin edilebilmektedir.
+Modelin dengeli performansı (%64 Balanced Accuracy) orta seviyededir.
+Sonuç olarak model, özellikle 'riskli müşterileri' (Yes sınıfı) yakalama konusunda geliştirilmelidir.
+
+
+
+# Modelin Doğruluğu (Accuracy)
+Doğruluk oranını hesaplayalım.
+```{r}
+cc <- table(test$default, test.predicted.m1 > 0.5)
+accuracy1 <- (cc[2,2] + cc[1,1]) / sum(cc)
+accuracy1
+```
+Modelin doğruluğu %97.125 olup, test verisi üzerinde oldukça yüksek bir başarı göstermektedir. Bu oran, modelin çoğu gözlemi doğru sınıflandırabildiğini ifade eder.
+Ancak doğruluk tek başına yeterli olmayabilir — özellikle veri setindeki sınıflar dengesizse (örneğin "No" çok fazla, "Yes" çok az ise), model sadece ağırlıklı sınıfı tahmin ederek de yüksek doğruluk elde edebilir.
+
+
+
+# Her üç modelin performansını ROC eğrisi ve AUC değerleri üzerinden değerlendirebiliriz:
+```{r}
+
+library(ROCR)
+
+# 1. Modelin ROC eğrisini çizme
+par(mfrow=c(1, 3))
+
+# Model 1 ROC eğrisini çizme
+roc1 <- prediction(test.predicted.m1, test$default)
+roc1_perf <- performance(roc1, measure = "tpr", x.measure = "fpr")
+plot(roc1_perf, main="Model 1 ROC Eğrisi")
+
+# Model 2 ROC eğrisini çizme
+roc2 <- prediction(test.predicted.m2, test$default)
+roc2_perf <- performance(roc2, measure = "tpr", x.measure = "fpr")
+plot(roc2_perf, main="Model 2 ROC Eğrisi")
+
+# Model 3 ROC eğrisini çizme
+roc3 <- prediction(test.predicted.m3, test$default)
+roc3_perf <- performance(roc3, measure = "tpr", x.measure = "fpr")
+plot(roc3_perf, main="Model 3 ROC Eğrisi")
+```
+
+# Eğri altında kalan alanların hesaplanması
+```{r}
+# AUC (Eğri Altındaki Alan) hesaplaması
+auc1 <- performance(roc1, measure = "auc")
+auc2 <- performance(roc2, measure = "auc")
+auc3 <- performance(roc3, measure = "auc")
+
+# Model 1 AUC değeri
+auc1_value <- auc1@y.values[[1]]
+cat("Model 1 AUC: ", auc1_value, "\n")
+
+# Model 2 AUC değeri
+auc2_value <- auc2@y.values[[1]]
+cat("Model 2 AUC: ", auc2_value, "\n")
+
+# Model 3 AUC değeri
+auc3_value <- auc3@y.values[[1]]
+cat("Model 3 AUC: ", auc3_value, "\n")
+```
+Model 1 ve Model 3: Bu iki model, AUC değerleri bakımından çok benzer sonuçlar veriyor ve her ikisi de yüksek AUC değerlerine sahip, bu da her iki modelin de çok iyi performans gösterdiğini ifade eder.
+
+Model 2: Bu modelin AUC değeri 0.5 civarına çok yakın, yani neredeyse rastgele tahmin yapıyor. Bu, Model 2'nin kesinlikle geliştirilmesi gerektiğini gösterir. Model 2, gerçek dünya uygulamalarında güvenilmez olabilir.
+
+Sonuç olarak, Model 1 ve Model 3, Model 2'den çok daha iyi performans gösteriyor. 
+
+
+
+
+
+
+
+
+
+
+
+
